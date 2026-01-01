@@ -24,28 +24,6 @@ FutPrevisão V2.0 é uma plataforma completa de análise estatística para merca
 
 ---
 
-## 🚀 Instalação Rápida
-
-```bash
-# 1. Clonar repositório
-git clone https://github.com/seu-usuario/futprevisao-v2.git
-cd futprevisao-v2
-
-# 2. Criar ambiente virtual
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 3. Instalar dependências
-pip install -r requirements.txt
-
-# 4. Executar aplicação
-streamlit run app.py
-```
-
-Abra o navegador em: `http://localhost:8501`
-
----
-
 ## 📦 Estrutura do Projeto
 
 ```
