@@ -1,0 +1,556 @@
+__all__ = ["config","utils","data_loader","features","predict","assistant"]
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import datetime
+from dateutil import parser
+
+def normalize_text(s: str) -> str:
+    if s is None:
+        return ""
+    s = str(s).strip()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def keyify(s: str) -> str:
+    s = normalize_text(s).lower()
+    s = re.sub(r"[^a-z0-9 ]+", "", s)
+    s = s.replace(" ", "")
+    return s
+
+def parse_date_safe(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    # football-data: dd/mm/yyyy
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            pass
+    try:
+        return parser.parse(s, dayfirst=True)
+    except Exception:
+        return None
+
+def safe_float(x, default=0.0) -> float:
+    try:
+        if x is None: 
+            return default
+        if isinstance(x, str) and not x.strip():
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+def safe_int(x, default=0) -> int:
+    try:
+        if x is None:
+            return default
+        if isinstance(x, str) and not x.strip():
+            return default
+        return int(float(x))
+    except Exception:
+        return default
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime
+import pandas as pd
+
+from .utils import parse_date_safe
+from .features import list_teams
+from .predict import predict_match
+
+@dataclass
+class AssistantResponse:
+    title: str
+    body: str
+    data: pd.DataFrame | None = None
+
+def _extract_date(text: str) -> datetime | None:
+    # tenta dd/mm/yyyy
+    m = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", text)
+    if m:
+        return parse_date_safe(m.group(1))
+    # tenta "hoje"
+    if re.search(r"\bhoje\b", text, re.I):
+        return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return None
+
+def answer(user_text: str, matches: pd.DataFrame, calendar: pd.DataFrame, referees: pd.DataFrame) -> AssistantResponse:
+    t = (user_text or "").strip()
+    if not t:
+        return AssistantResponse(title="Assistente", body="Digite uma pergunta (ex.: 'top jogos de hoje por cantos').")
+
+    # intents simples
+    if re.search(r"\b(top|melhores|ranking)\b", t, re.I) and re.search(r"\b(cantos|escanteios|cartoes|cartões)\b", t, re.I):
+        d = _extract_date(t) or (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
+        if calendar is None or calendar.empty:
+            return AssistantResponse(title="Ranking", body="Calendário não encontrado no projeto.")
+        cal = calendar.copy()
+        cal = cal[cal["Data"].notna()]
+        cal_day = cal[cal["Data"].dt.date == d.date()].copy()
+        if cal_day.empty:
+            return AssistantResponse(title="Ranking", body=f"Não encontrei jogos no calendário para {d.date().isoformat()}.")
+        rows = []
+        for _, r in cal_day.iterrows():
+            league = r.get("Liga","")
+            home = r.get("Time_Casa","")
+            away = r.get("Time_Visitante","")
+            if not league or not home or not away:
+                continue
+            try:
+                pred = predict_match(matches, referees, league, home, away, window=15)
+                rows.append({
+                    "Data": r.get("Data"),
+                    "Hora": r.get("Hora",""),
+                    "Liga": league,
+                    "Casa": home,
+                    "Visitante": away,
+                    "Cantos_μ": round(pred.corners_mean,2),
+                    "Cantos_P80": pred.corners_p80,
+                    "Cartões_μ": round(pred.cards_mean,2),
+                    "Cartões_P80": pred.cards_p80,
+                    "Conf": pred.confidence,
+                })
+            except Exception:
+                continue
+        if not rows:
+            return AssistantResponse(title="Ranking", body="Não consegui calcular previsões para os jogos do dia (verifique nomes de times/ligas).")
+        df = pd.DataFrame(rows)
+        # ranking: cantos e cartões
+        if re.search(r"\b(cartoes|cartões)\b", t, re.I) and not re.search(r"\b(cantos|escanteios)\b", t, re.I):
+            df = df.sort_values(["Cartões_μ","Cartões_P80"], ascending=False)
+            body = "Ranking por potencial de **cartões** (μ e P80)."
+        elif re.search(r"\b(cantos|escanteios)\b", t, re.I) and not re.search(r"\b(cartoes|cartões)\b", t, re.I):
+            df = df.sort_values(["Cantos_μ","Cantos_P80"], ascending=False)
+            body = "Ranking por potencial de **cantos** (μ e P80)."
+        else:
+            df["Score"] = df["Cantos_μ"]*0.55 + df["Cartões_μ"]*0.45
+            df = df.sort_values(["Score"], ascending=False)
+            body = "Ranking combinado (cantos + cartões)."
+        return AssistantResponse(title="Ranking do dia", body=body, data=df.head(15))
+
+    if re.search(r"\b(perfil|time|stats)\b", t, re.I):
+        # tentar extrair um time
+        # fallback: pede ao usuário no UI, mas aqui devolve instrução
+        return AssistantResponse(
+            title="Perfil de time",
+            body="Dica: use a aba **Times** para escolher a liga e o time e ver métricas (rolling, casa/fora, variância)."
+        )
+
+    if re.search(r"\b(comparar|vs|x)\b", t, re.I):
+        return AssistantResponse(
+            title="Comparação",
+            body="Dica: use a aba **Partida** para escolher liga, mandante e visitante e ver previsões e explicações."
+        )
+
+    return AssistantResponse(
+        title="Assistente",
+        body="Posso ajudar com: ranking do dia (cantos/cartões), prévia de partida e métricas por time. Ex.: 'top jogos de hoje por cantos'."
+    )
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+import numpy as np
+import pandas as pd
+
+from .features import compute_team_features
+
+@dataclass
+class Prediction:
+    league: str
+    home: str
+    away: str
+    corners_mean: float
+    cards_mean: float
+    corners_p50: float
+    corners_p80: float
+    cards_p50: float
+    cards_p80: float
+    confidence: str
+    notes: list[str]
+
+def _poisson_quantile(lam: float, q: float, max_k: int = 60) -> int:
+    if lam <= 0:
+        return 0
+    # CDF incremental
+    cdf = 0.0
+    k = 0
+    p = math.exp(-lam)
+    cdf = p
+    while cdf < q and k < max_k:
+        k += 1
+        p *= lam / k
+        cdf += p
+    return k
+
+def _confidence(n: int, std: float) -> str:
+    # heurística simples
+    if n >= 12 and (not np.isnan(std)) and std < 4.5:
+        return "alta"
+    if n >= 8:
+        return "média"
+    return "baixa"
+
+def _ref_factor(referees: pd.DataFrame, league: str, referee: str) -> float:
+    if referees is None or referees.empty or not referee:
+        return 1.0
+    # tentar coluna Arbitro/Liga
+    cols = [c.lower() for c in referees.columns]
+    if "arbitro" in cols and "liga" in cols:
+        tmp = referees.copy()
+        # padroniza nomes de colunas
+        liga_col = referees.columns[cols.index("liga")]
+        arb_col = referees.columns[cols.index("arbitro")]
+        m = tmp[(tmp[liga_col].astype(str) == league) & (tmp[arb_col].astype(str) == referee)]
+        if not m.empty:
+            # média de cartões por jogo, se existir
+            for c in referees.columns:
+                if c.lower() == "media_cartoes_por_jogo":
+                    val = pd.to_numeric(m.iloc[0][c], errors="coerce")
+                    if pd.notna(val):
+                        # normaliza em torno de 4.0
+                        return float(val) / 4.0 if float(val) > 0 else 1.0
+    return 1.0
+
+def predict_match(matches: pd.DataFrame, referees: pd.DataFrame, league: str, home: str, away: str, window: int = 15, match_referee: str | None = None) -> Prediction:
+    # Features dos dois times
+    hf = compute_team_features(matches, league, home, window=window)
+    af = compute_team_features(matches, league, away, window=window)
+
+    notes = []
+    if hf.n_matches < 6: notes.append(f"Amostra pequena para {home} ({hf.n_matches} jogos).")
+    if af.n_matches < 6: notes.append(f"Amostra pequena para {away} ({af.n_matches} jogos).")
+
+    # Baseline liga
+    dfL = matches[matches["League"] == league]
+    league_corners = pd.to_numeric(dfL["Corners_T"], errors="coerce").dropna()
+    league_cards = pd.to_numeric(dfL["Cards_T"], errors="coerce").dropna()
+    lc = float(league_corners.mean()) if len(league_corners) else 10.0
+    lca = float(league_cards.mean()) if len(league_cards) else 4.0
+
+    # Cantos: combinação simples (home for + away against) e (away for + home against) -> total
+    mu_corners_home = np.nanmean([hf.corners_for_home_avg, af.corners_against_away_avg])
+    mu_corners_away = np.nanmean([af.corners_for_away_avg, hf.corners_against_home_avg])
+    corners_mean = float(np.nanmean([mu_corners_home + mu_corners_away, lc]))
+    if np.isnan(corners_mean):
+        corners_mean = lc
+
+    # Cartões: base dos times + ajuste árbitro
+    mu_cards_home = np.nanmean([hf.cards_for_home_avg, af.cards_against_away_avg])
+    mu_cards_away = np.nanmean([af.cards_for_away_avg, hf.cards_against_home_avg])
+    cards_mean = float(np.nanmean([mu_cards_home + mu_cards_away, lca]))
+    if np.isnan(cards_mean):
+        cards_mean = lca
+
+    # Ajuste por árbitro (se disponível)
+    rf = _ref_factor(referees, league, match_referee or "")
+    if rf != 1.0:
+        cards_mean *= rf
+        notes.append(f"Ajuste por árbitro aplicado (fator {rf:.2f}).")
+
+    corners_p50 = _poisson_quantile(corners_mean, 0.50)
+    corners_p80 = _poisson_quantile(corners_mean, 0.80)
+    cards_p50 = _poisson_quantile(cards_mean, 0.50)
+    cards_p80 = _poisson_quantile(cards_mean, 0.80)
+
+    conf = _confidence(min(hf.n_matches, af.n_matches), np.nanmean([hf.corners_std, af.corners_std]))
+
+    return Prediction(
+        league=league, home=home, away=away,
+        corners_mean=corners_mean, cards_mean=cards_mean,
+        corners_p50=float(corners_p50), corners_p80=float(corners_p80),
+        cards_p50=float(cards_p50), cards_p80=float(cards_p80),
+        confidence=conf, notes=notes
+    )
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+@dataclass(frozen=True)
+class Paths:
+    root: Path
+    leagues_dir: Path
+    calendar_dir: Path
+    referees_dir: Path
+
+def get_paths(root: str | Path) -> Paths:
+    root = Path(root).resolve()
+    return Paths(
+        root=root,
+        leagues_dir=root / "data" / "leagues",
+        calendar_dir=root / "data" / "calendar",
+        referees_dir=root / "data" / "referees",
+    )
+
+LEAGUE_FILES = {
+    "Premier League": "Premier_League_25_26.csv",
+    "Championship": "Championship_Inglaterra_25_26.csv",
+    "La Liga": "La_Liga_25_26.csv",
+    "Serie A": "Serie_A_25_26.csv",
+    "Bundesliga 2": "Bundesliga_2.csv",
+    "Ligue 1": "Ligue_1_25_26.csv",
+    "Pro League": "Pro_League_Belgica_25_26.csv",
+    "Süper Lig": "Super_Lig_Turquia_25_26.csv",
+}
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Tuple, List
+import pandas as pd
+
+from .utils import parse_date_safe, normalize_text
+from .config import LEAGUE_FILES
+
+# Colunas que usamos (evitamos colunas de odds)
+NEEDED_COLUMNS = [
+    "Date","Time","HomeTeam","AwayTeam","Referee",
+    "HC","AC","HY","AY","HR","AR",
+    "HF","AF","HS","AS","HST","AST",
+    "FTHG","FTAG"
+]
+
+@dataclass
+class DataBundle:
+    matches: pd.DataFrame
+    calendar: pd.DataFrame
+    referees: pd.DataFrame
+    warnings: List[str]
+
+def _coalesce_columns(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+    # Garante que todas as colunas existam
+    for c in cols:
+        if c not in df.columns:
+            df[c] = pd.NA
+    return df
+
+def load_league_csv(path: Path, league_name: str) -> Tuple[pd.DataFrame, List[str]]:
+    warnings = []
+    df = pd.read_csv(path)
+    df = _coalesce_columns(df, NEEDED_COLUMNS)
+
+    # parse date
+    df["Date"] = df["Date"].apply(parse_date_safe)
+    if df["Date"].isna().all():
+        warnings.append(f"[{league_name}] coluna Date não pôde ser interpretada.")
+    df["League"] = league_name
+
+    # normalização leve (sem destruir nomes)
+    for c in ["HomeTeam","AwayTeam","Referee"]:
+        df[c] = df[c].astype(str).map(normalize_text)
+
+    # métricas derivadas
+    df["Corners_H"] = pd.to_numeric(df["HC"], errors="coerce")
+    df["Corners_A"] = pd.to_numeric(df["AC"], errors="coerce")
+    df["Cards_H_Y"] = pd.to_numeric(df["HY"], errors="coerce")
+    df["Cards_A_Y"] = pd.to_numeric(df["AY"], errors="coerce")
+    df["Cards_H_R"] = pd.to_numeric(df["HR"], errors="coerce")
+    df["Cards_A_R"] = pd.to_numeric(df["AR"], errors="coerce")
+
+    # total corners/cards
+    df["Corners_T"] = df["Corners_H"].fillna(0) + df["Corners_A"].fillna(0)
+    # cartão vermelho conta como 2 por padrão (ajustável no engine)
+    df["Cards_T"] = df["Cards_H_Y"].fillna(0) + df["Cards_A_Y"].fillna(0) + 2*(df["Cards_H_R"].fillna(0) + df["Cards_A_R"].fillna(0))
+
+    # goals (usado só como contexto, não como alvo)
+    df["Goals_H"] = pd.to_numeric(df["FTHG"], errors="coerce")
+    df["Goals_A"] = pd.to_numeric(df["FTAG"], errors="coerce")
+
+    # ordenação
+    df = df.sort_values(["Date","Time","HomeTeam","AwayTeam"], na_position="last").reset_index(drop=True)
+
+    # avisos de cobertura
+    coverage = df["Corners_T"].notna().mean()
+    if coverage < 0.6:
+        warnings.append(f"[{league_name}] cobertura de cantos baixa ({coverage:.0%}).")
+    coverage_cards = df["Cards_T"].notna().mean()
+    if coverage_cards < 0.6:
+        warnings.append(f"[{league_name}] cobertura de cartões baixa ({coverage_cards:.0%}).")
+
+    # manter apenas colunas relevantes + derivadas
+    keep = ["League"] + NEEDED_COLUMNS + [
+        "Corners_H","Corners_A","Corners_T",
+        "Cards_H_Y","Cards_A_Y","Cards_H_R","Cards_A_R","Cards_T",
+        "Goals_H","Goals_A"
+    ]
+    df = df[keep]
+    return df, warnings
+
+def load_calendar_csv(path: Path) -> Tuple[pd.DataFrame, List[str]]:
+    warnings = []
+    cal = pd.read_csv(path)
+    # Esperado: Data, Hora, Liga, Time_Casa, Time_Visitante
+    expected = ["Data","Hora","Liga","Time_Casa","Time_Visitante"]
+    for c in expected:
+        if c not in cal.columns:
+            warnings.append(f"[Calendário] coluna ausente: {c}")
+            cal[c] = pd.NA
+    cal["Data"] = cal["Data"].apply(parse_date_safe)
+    cal["Liga"] = cal["Liga"].astype(str).map(normalize_text)
+    cal["Time_Casa"] = cal["Time_Casa"].astype(str).map(normalize_text)
+    cal["Time_Visitante"] = cal["Time_Visitante"].astype(str).map(normalize_text)
+    cal = cal.sort_values(["Data","Hora","Liga"], na_position="last").reset_index(drop=True)
+    return cal, warnings
+
+def load_referees(dir_path: Path) -> Tuple[pd.DataFrame, List[str]]:
+    warnings = []
+    # preferir arquivo mais rico, se existir
+    candidates = [
+        dir_path / "arbitros_5_ligas_2025_2026.csv",
+        dir_path / "arbitros.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            ref = pd.read_csv(p)
+            # normalizações
+            for c in ref.columns:
+                if ref[c].dtype == object:
+                    ref[c] = ref[c].astype(str).map(normalize_text)
+            return ref, warnings
+    warnings.append("[Árbitros] nenhum arquivo encontrado.")
+    return pd.DataFrame(), warnings
+
+def load_all_data(project_root: str | Path) -> DataBundle:
+    root = Path(project_root).resolve()
+    leagues_dir = root / "data" / "leagues"
+    calendar_dir = root / "data" / "calendar"
+    referees_dir = root / "data" / "referees"
+
+    all_matches = []
+    warnings = []
+
+    for league_name, filename in LEAGUE_FILES.items():
+        p = leagues_dir / filename
+        if not p.exists():
+            warnings.append(f"[{league_name}] arquivo não encontrado: {filename}")
+            continue
+        df, w = load_league_csv(p, league_name)
+        warnings.extend(w)
+        all_matches.append(df)
+
+    matches = pd.concat(all_matches, ignore_index=True) if all_matches else pd.DataFrame()
+
+    cal_path = calendar_dir / "calendario_ligas.csv"
+    calendar, wcal = load_calendar_csv(cal_path) if cal_path.exists() else (pd.DataFrame(), ["[Calendário] calendario_ligas.csv não encontrado"])
+    warnings.extend(wcal)
+
+    referees, wref = load_referees(referees_dir)
+    warnings.extend(wref)
+
+    return DataBundle(matches=matches, calendar=calendar, referees=referees, warnings=warnings)
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import pandas as pd
+import numpy as np
+
+@dataclass
+class TeamFeatures:
+    league: str
+    team: str
+    n_matches: int
+    corners_for_avg: float
+    corners_against_avg: float
+    cards_for_avg: float
+    cards_against_avg: float
+    corners_for_home_avg: float
+    corners_against_home_avg: float
+    corners_for_away_avg: float
+    corners_against_away_avg: float
+    cards_for_home_avg: float
+    cards_against_home_avg: float
+    cards_for_away_avg: float
+    cards_against_away_avg: float
+    corners_std: float
+    cards_std: float
+
+def _team_side_features(df: pd.DataFrame, team: str, side: str) -> pd.DataFrame:
+    if side == "H":
+        m = df[df["HomeTeam"] == team].copy()
+        m["corners_for"] = pd.to_numeric(m["Corners_H"], errors="coerce")
+        m["corners_against"] = pd.to_numeric(m["Corners_A"], errors="coerce")
+        m["cards_for"] = pd.to_numeric(m["Cards_H_Y"], errors="coerce") + 2*pd.to_numeric(m["Cards_H_R"], errors="coerce")
+        m["cards_against"] = pd.to_numeric(m["Cards_A_Y"], errors="coerce") + 2*pd.to_numeric(m["Cards_A_R"], errors="coerce")
+    else:
+        m = df[df["AwayTeam"] == team].copy()
+        m["corners_for"] = pd.to_numeric(m["Corners_A"], errors="coerce")
+        m["corners_against"] = pd.to_numeric(m["Corners_H"], errors="coerce")
+        m["cards_for"] = pd.to_numeric(m["Cards_A_Y"], errors="coerce") + 2*pd.to_numeric(m["Cards_A_R"], errors="coerce")
+        m["cards_against"] = pd.to_numeric(m["Cards_H_Y"], errors="coerce") + 2*pd.to_numeric(m["Cards_H_R"], errors="coerce")
+    return m
+
+def compute_team_features(matches: pd.DataFrame, league: str, team: str, window: int = 15) -> TeamFeatures:
+    df = matches[matches["League"] == league].copy()
+    df = df.sort_values("Date")
+    # últimos N jogos (tanto casa quanto fora)
+    m_all = df[(df["HomeTeam"] == team) | (df["AwayTeam"] == team)].tail(window).copy()
+
+    m_h = _team_side_features(df, team, "H").tail(window)
+    m_a = _team_side_features(df, team, "A").tail(window)
+
+    def avg(series):
+        return float(pd.to_numeric(series, errors="coerce").dropna().mean()) if len(series) else float("nan")
+
+    corners_for = []
+    corners_against = []
+    cards_for = []
+    cards_against = []
+
+    # construir séries combinadas
+    corners_for.extend(pd.to_numeric(m_h["corners_for"], errors="coerce").dropna().tolist())
+    corners_for.extend(pd.to_numeric(m_a["corners_for"], errors="coerce").dropna().tolist())
+    corners_against.extend(pd.to_numeric(m_h["corners_against"], errors="coerce").dropna().tolist())
+    corners_against.extend(pd.to_numeric(m_a["corners_against"], errors="coerce").dropna().tolist())
+
+    cards_for.extend(pd.to_numeric(m_h["cards_for"], errors="coerce").dropna().tolist())
+    cards_for.extend(pd.to_numeric(m_a["cards_for"], errors="coerce").dropna().tolist())
+    cards_against.extend(pd.to_numeric(m_h["cards_against"], errors="coerce").dropna().tolist())
+    cards_against.extend(pd.to_numeric(m_a["cards_against"], errors="coerce").dropna().tolist())
+
+    corners_series = pd.Series(corners_for + corners_against, dtype="float64")
+    cards_series = pd.Series(cards_for + cards_against, dtype="float64")
+
+    return TeamFeatures(
+        league=league,
+        team=team,
+        n_matches=int(len(m_all)),
+        corners_for_avg=float(np.nanmean(corners_for)) if len(corners_for) else float("nan"),
+        corners_against_avg=float(np.nanmean(corners_against)) if len(corners_against) else float("nan"),
+        cards_for_avg=float(np.nanmean(cards_for)) if len(cards_for) else float("nan"),
+        cards_against_avg=float(np.nanmean(cards_against)) if len(cards_against) else float("nan"),
+        corners_for_home_avg=avg(m_h["corners_for"]),
+        corners_against_home_avg=avg(m_h["corners_against"]),
+        corners_for_away_avg=avg(m_a["corners_for"]),
+        corners_against_away_avg=avg(m_a["corners_against"]),
+        cards_for_home_avg=avg(m_h["cards_for"]),
+        cards_against_home_avg=avg(m_h["cards_against"]),
+        cards_for_away_avg=avg(m_a["cards_for"]),
+        cards_against_away_avg=avg(m_a["cards_against"]),
+        corners_std=float(corners_series.dropna().std()) if corners_series.dropna().shape[0] > 1 else float("nan"),
+        cards_std=float(cards_series.dropna().std()) if cards_series.dropna().shape[0] > 1 else float("nan"),
+    )
+
+def list_teams(matches: pd.DataFrame, league: str) -> list[str]:
+    df = matches[matches["League"] == league]
+    teams = pd.concat([df["HomeTeam"], df["AwayTeam"]], ignore_index=True).dropna().unique().tolist()
+    teams = sorted([t for t in teams if str(t).strip()])
+    return teams
