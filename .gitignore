@@ -1,19 +1,65 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual env
-.venv/
+# Virtual Environment
 venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Streamlit
 .streamlit/
 
-# OS / editor
-.DS_Store
-Thumbs.db
+# Data backups
+backup_*/
+*.bak
 
-# Env secrets
-.env
+# Logs
+*.log
+logs/
+
+# User data
+data/user/*.json
+!data/user/.gitkeep
+
+# Reports
+relatorio_*.txt
+!relatorio_exemplo.txt
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Large PDFs (use Git LFS if needed)
+*.pdf
+!docs/*.pdf
