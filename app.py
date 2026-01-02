@@ -1,15 +1,20 @@
 """
-FutPrevisão V36.0 SUPREME
+FutPrevisão V36.1 ULTIMATE
 Sistema Definitivo de Análise de Apostas Esportivas
 
-✨ 45+ Melhorias Implementadas
-🌅 Tema Claro Premium
-🧠 IA Avançada com Recomendações Automáticas
-📊 Analytics Completo
-🎯 Interface UX Premium
+✨ 13 Novas Funcionalidades
+🌅 Tema Claro/Escuro (Toggle)
+🔔 Sistema de Alertas
+⭐ Favorites/Watchlist
+📸 Export de Bilhetes
+📊 Historical Tracking Completo
+🎯 Bookmaker Comparison
+🔥 Streak Tracker
+⚖️ Team Comparison Tool
 
 Autor: Diego ADS
 Data: Janeiro 2026
+Versão: 36.1 ULTIMATE
 """
 
 import streamlit as st
@@ -24,49 +29,78 @@ from typing import Dict, List, Tuple, Optional
 import os
 import re
 import json
+import base64
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 
 # ==============================================================================
 # CONFIGURAÇÃO GLOBAL
 # ==============================================================================
 
 st.set_page_config(
-    page_title="FutPrevisão V36.0 SUPREME",
+    page_title="FutPrevisão V36.1 ULTIMATE",
     layout="wide",
     page_icon="⚽",
     initial_sidebar_state="expanded"
 )
 
-VERSION = "V36.0 SUPREME"
+VERSION = "V36.1 ULTIMATE"
 AUTHOR = "Diego ADS"
 
 # ==============================================================================
-# CSS TEMA CLARO PREMIUM (TODAS CORES CLARAS)
+# SESSION STATE INITIALIZATION
 # ==============================================================================
 
-st.markdown("""
+def init_session_state():
+    """Inicializa session state com todos os valores necessários"""
+    
+    defaults = {
+        'theme': 'light',  # 'light' ou 'dark'
+        'contexto_oraculo': {
+            'historico': [],
+            'banca': 1000.0
+        },
+        'chat_history': [],
+        'bilhete': [],
+        'bets_history': [],
+        'favorites': [],
+        'alerts': [],
+        'streak': {
+            'current': 0,
+            'best': 0,
+            'total_wins': 0,
+            'total_bets': 0
+        },
+        'dashboard_date': datetime.today().strftime("%d/%m/%Y"),
+        'dashboard_league': 'Todas'
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# ==============================================================================
+# CSS DINÂMICO (LIGHT/DARK)
+# ==============================================================================
+
+def get_theme_css():
+    """Retorna CSS baseado no tema atual"""
+    
+    theme = st.session_state.theme
+    
+    if theme == 'light':
+        return """
 <style>
-    /* ===== BACKGROUND & CORES BASE ===== */
-    .main {
-        background-color: #FFFFFF;
-        color: #1E293B;
-    }
+    /* ===== LIGHT THEME ===== */
+    .main { background-color: #FFFFFF; color: #1E293B; }
+    .stApp { background-color: #F8FAFC; }
     
-    .stApp {
-        background-color: #F8FAFC;
-    }
-    
-    /* ===== TIPOGRAFIA ===== */
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Inter', 'Segoe UI', sans-serif;
         color: #1E293B;
         font-weight: 700;
-    }
-    
-    /* ===== CARDS & CONTAINERS ===== */
-    div[data-testid="stMetricValue"] {
-        font-size: 28px;
-        font-weight: 700;
-        color: #1E293B;
     }
     
     div[data-testid="metric-container"] {
@@ -83,29 +117,12 @@ st.markdown("""
         transform: translateY(-2px);
     }
     
-    /* ===== TABS (TODAS CLARAS) ===== */
     .stTabs [aria-selected="true"] {
         background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%) !important;
         color: white !important;
         font-weight: 700;
-        border-radius: 8px 8px 0 0;
     }
     
-    .stTabs [data-baseweb="tab"] {
-        background-color: #F1F5F9;
-        color: #64748B;
-        border-radius: 8px 8px 0 0;
-        padding: 12px 24px;
-        font-weight: 600;
-        transition: all 0.2s ease;
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: #E2E8F0;
-        color: #1E293B;
-    }
-    
-    /* ===== BUTTONS (CORES CLARAS) ===== */
     .stButton button {
         background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
         color: white;
@@ -113,7 +130,6 @@ st.markdown("""
         border-radius: 12px;
         padding: 12px 28px;
         font-weight: 600;
-        font-size: 15px;
         box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
         transition: all 0.3s ease;
     }
@@ -124,7 +140,6 @@ st.markdown("""
         transform: translateY(-2px);
     }
     
-    /* ===== BADGES (TODAS CLARAS) ===== */
     .badge-success {
         background-color: #D1FAE5;
         color: #065F46;
@@ -169,7 +184,6 @@ st.markdown("""
         border: 2px solid #BFDBFE;
     }
     
-    /* ===== CARDS PERSONALIZADOS (CLAROS) ===== */
     .card-light {
         background: white;
         border: 2px solid #E2E8F0;
@@ -178,11 +192,6 @@ st.markdown("""
         margin: 12px 0;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         transition: all 0.3s ease;
-    }
-    
-    .card-light:hover {
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-        transform: translateY(-2px);
     }
     
     .card-success {
@@ -212,117 +221,169 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
     }
     
-    /* ===== PROGRESS BAR (CLARO) ===== */
-    .progress-bar {
-        background-color: #F1F5F9;
-        border-radius: 12px;
-        height: 28px;
-        overflow: hidden;
-        border: 2px solid #E2E8F0;
-    }
-    
-    .progress-fill {
-        background: linear-gradient(90deg, #3B82F6 0%, #2563EB 100%);
-        height: 100%;
-        border-radius: 10px;
-        transition: width 0.5s ease;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: 700;
-        font-size: 13px;
-    }
-    
-    /* ===== VALUE METER (CLARO) ===== */
-    .value-meter {
-        background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
-        border: 2px solid #E2E8F0;
-        border-radius: 16px;
-        padding: 16px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    }
-    
-    .value-meter-high {
-        border: 3px solid #6EE7B7;
-        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
-    }
-    
-    .value-meter-medium {
-        border: 3px solid #FCD34D;
-        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-    }
-    
-    .value-meter-low {
-        border: 3px solid #FCA5A5;
-        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
-    }
-    
-    /* ===== SIDEBAR (CLARO) ===== */
     [data-testid="stSidebar"] {
         background-color: #F8FAFC;
         border-right: 2px solid #E2E8F0;
     }
     
-    /* ===== DATAFRAME (CLARO) ===== */
-    .dataframe {
-        border: 2px solid #E2E8F0 !important;
-        border-radius: 12px;
-    }
-    
-    /* ===== EXPANDER (CLARO) ===== */
-    .streamlit-expanderHeader {
-        background-color: #F1F5F9;
-        border: 2px solid #E2E8F0;
-        border-radius: 12px;
-        color: #1E293B;
-        font-weight: 600;
-    }
-    
-    /* ===== INPUTS (CLAROS) ===== */
-    .stTextInput input, .stNumberInput input, .stSelectbox select {
-        background-color: white;
-        border: 2px solid #E2E8F0;
-        border-radius: 12px;
-        color: #1E293B;
-        font-weight: 500;
-    }
-    
-    .stTextInput input:focus, .stNumberInput input:focus, .stSelectbox select:focus {
-        border-color: #3B82F6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-    
-    /* ===== TOOLTIPS ===== */
-    .tooltip {
-        background-color: #1E293B;
-        color: white;
-        padding: 8px 12px;
-        border-radius: 8px;
-        font-size: 13px;
-        font-weight: 500;
-    }
-    
-    /* ===== ANIMATIONS ===== */
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
     }
     
-    .fade-in {
-        animation: fadeIn 0.5s ease;
+    .fade-in { animation: fadeIn 0.5s ease; }
+</style>
+"""
+    else:  # dark theme
+        return """
+<style>
+    /* ===== DARK THEME ===== */
+    .main { background-color: #0f172a; color: #f1f5f9; }
+    .stApp { background-color: #1e293b; }
+    
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+        color: #f1f5f9;
+        font-weight: 700;
     }
     
-    /* ===== SPINNER (CLARO) ===== */
-    .stSpinner > div {
-        border-top-color: #3B82F6 !important;
+    div[data-testid="metric-container"] {
+        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        border: 2px solid #475569;
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        transition: all 0.3s ease;
     }
+    
+    div[data-testid="metric-container"]:hover {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        transform: translateY(-2px);
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%) !important;
+        color: white !important;
+        font-weight: 700;
+    }
+    
+    .stButton button {
+        background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 28px;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        transition: all 0.3s ease;
+    }
+    
+    .stButton button:hover {
+        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+        transform: translateY(-2px);
+    }
+    
+    .badge-success {
+        background-color: #064e3b;
+        color: #d1fae5;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 13px;
+        display: inline-block;
+        border: 2px solid #10b981;
+    }
+    
+    .badge-warning {
+        background-color: #78350f;
+        color: #fef3c7;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 13px;
+        display: inline-block;
+        border: 2px solid #f59e0b;
+    }
+    
+    .badge-danger {
+        background-color: #7f1d1d;
+        color: #fee2e2;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 13px;
+        display: inline-block;
+        border: 2px solid #ef4444;
+    }
+    
+    .badge-info {
+        background-color: #1e3a8a;
+        color: #dbeafe;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 13px;
+        display: inline-block;
+        border: 2px solid #3b82f6;
+    }
+    
+    .card-light {
+        background: #1e293b;
+        border: 2px solid #475569;
+        border-radius: 16px;
+        padding: 24px;
+        margin: 12px 0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        transition: all 0.3s ease;
+    }
+    
+    .card-success {
+        background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+        border: 2px solid #10b981;
+        border-radius: 16px;
+        padding: 20px;
+        margin: 12px 0;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+    }
+    
+    .card-warning {
+        background: linear-gradient(135deg, #78350f 0%, #92400e 100%);
+        border: 2px solid #f59e0b;
+        border-radius: 16px;
+        padding: 20px;
+        margin: 12px 0;
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15);
+    }
+    
+    .card-info {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+        border: 2px solid #3b82f6;
+        border-radius: 16px;
+        padding: 20px;
+        margin: 12px 0;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+    }
+    
+    [data-testid="stSidebar"] {
+        background-color: #1e293b;
+        border-right: 2px solid #475569;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .fade-in { animation: fadeIn 0.5s ease; }
 </style>
-""", unsafe_allow_html=True)
+"""
+
+# Aplicar CSS
+st.markdown(get_theme_css(), unsafe_allow_html=True)
 
 # ==============================================================================
-# CONSTANTES E CONFIGURAÇÕES
+# CONSTANTES
 # ==============================================================================
 
 LEAGUE_FILES = {
@@ -338,32 +399,83 @@ LEAGUE_FILES = {
     "Premiership": "Premiership_Escocia_25_26.csv"
 }
 
-THRESHOLDS = {
-    'min_games': 5,
-    'high_confidence': 80,
-    'medium_confidence': 60,
-    'low_confidence': 40,
-    'high_volatility': 40,
-    'medium_volatility': 25
-}
-
-MARKET_ICONS = {
-    'corners': '⚽',
-    'cards': '🟨',
-    'goals': '🎯',
-    'fouls': '🚫'
+BOOKMAKERS = {
+    'Bet365': {'factor': 1.00},
+    'Pinnacle': {'factor': 0.98},
+    'Betfair': {'factor': 0.96},
+    'Betano': {'factor': 0.99},
+    '1xBet': {'factor': 1.02}
 }
 
 # ==============================================================================
-# DATA ENGINE SUPREME
+# UTILITÁRIOS
+# ==============================================================================
+
+class Utils:
+    """Funções utilitárias"""
+    
+    @staticmethod
+    def format_date(date_str: str) -> str:
+        """Formata data para DD/MM/YYYY"""
+        try:
+            if '/' in date_str:
+                return date_str
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            return dt.strftime("%d/%m/%Y")
+        except:
+            return date_str
+    
+    @staticmethod
+    def parse_date(date_str: str) -> datetime:
+        """Parse string para datetime"""
+        try:
+            return datetime.strptime(date_str, "%d/%m/%Y")
+        except:
+            return datetime.today()
+    
+    @staticmethod
+    def is_today(date_str: str) -> bool:
+        """Verifica se data é hoje"""
+        try:
+            dt = Utils.parse_date(date_str)
+            return dt.date() == datetime.today().date()
+        except:
+            return False
+    
+    @staticmethod
+    def add_to_favorites(game_id: str, game_name: str):
+        """Adiciona jogo aos favoritos"""
+        if 'favorites' not in st.session_state:
+            st.session_state.favorites = []
+        
+        if game_id not in [f['id'] for f in st.session_state.favorites]:
+            st.session_state.favorites.append({
+                'id': game_id,
+                'name': game_name,
+                'added_at': datetime.now().isoformat()
+            })
+    
+    @staticmethod
+    def remove_from_favorites(game_id: str):
+        """Remove jogo dos favoritos"""
+        st.session_state.favorites = [
+            f for f in st.session_state.favorites if f['id'] != game_id
+        ]
+    
+    @staticmethod
+    def is_favorite(game_id: str) -> bool:
+        """Verifica se jogo está nos favoritos"""
+        return game_id in [f['id'] for f in st.session_state.favorites]
+
+# ==============================================================================
+# DATA ENGINE (mesmo da V36.0)
 # ==============================================================================
 
 class DataEngineSupreme:
-    """Motor de dados com busca inteligente e normalização avançada"""
+    """Motor de dados com busca inteligente"""
     
     @staticmethod
     def get_mock_data(league_name: str, n_games: int = 30) -> pd.DataFrame:
-        """Gera dados mock para testes"""
         dates = pd.date_range(end=datetime.today(), periods=n_games).strftime("%d/%m/%Y")
         
         teams = {
@@ -398,7 +510,6 @@ class DataEngineSupreme:
     
     @staticmethod
     def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-        """Normaliza nomes de colunas"""
         column_mapping = {
             'Mandante': 'HomeTeam', 'Visitante': 'AwayTeam',
             'Time_Casa': 'HomeTeam', 'Time_Visitante': 'AwayTeam',
@@ -412,7 +523,6 @@ class DataEngineSupreme:
         
         df = df.rename(columns=column_mapping)
         
-        # Garantir colunas numéricas
         numeric_columns = ['HC', 'AC', 'HY', 'AY', 'FTHG', 'FTAG', 'HF', 'AF', 'HST', 'AST']
         for col in numeric_columns:
             if col not in df.columns:
@@ -424,15 +534,11 @@ class DataEngineSupreme:
     @staticmethod
     @st.cache_data(ttl=3600)
     def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict]:
-        """Carrega todos os dados com busca inteligente"""
-        
         matches_data = []
         file_status = {}
         
-        # Paths possíveis
         search_paths = [".", "data", "analytics", "./data", "./analytics", "../data"]
         
-        # Carregar ligas
         for league_name, filename in LEAGUE_FILES.items():
             found = False
             
@@ -460,24 +566,19 @@ class DataEngineSupreme:
                 file_status[league_name] = "⚠️ Usando dados simulados"
                 matches_data.append(DataEngineSupreme.get_mock_data(league_name))
         
-        # Consolidar matches
         full_df = pd.concat(matches_data, ignore_index=True)
         full_df['Total_Corners'] = full_df['HC'] + full_df['AC']
         full_df['Total_Cards'] = full_df['HY'] + full_df['AY']
         full_df['Total_Goals'] = full_df['FTHG'] + full_df['FTAG']
         full_df['Total_Fouls'] = full_df['HF'] + full_df['AF']
         
-        # Carregar calendário
         calendar_df = DataEngineSupreme._load_calendar(search_paths, file_status)
-        
-        # Carregar árbitros
         refs_df = DataEngineSupreme._load_referees(search_paths, file_status)
         
         return full_df, calendar_df, refs_df, file_status
     
     @staticmethod
     def _load_calendar(search_paths: List[str], file_status: Dict) -> pd.DataFrame:
-        """Carrega calendário"""
         filename = "calendario_ligas.csv"
         
         for base_path in search_paths:
@@ -493,7 +594,6 @@ class DataEngineSupreme:
                 except:
                     pass
         
-        # Mock data
         file_status['Calendário'] = "⚠️ Usando dados simulados"
         dates = pd.date_range(start=datetime.today(), periods=30).strftime("%d/%m/%Y")
         return pd.DataFrame({
@@ -506,7 +606,6 @@ class DataEngineSupreme:
     
     @staticmethod
     def _load_referees(search_paths: List[str], file_status: Dict) -> pd.DataFrame:
-        """Carrega árbitros"""
         filename = "arbitros_5_ligas_2025_2026.csv"
         
         for base_path in search_paths:
@@ -519,7 +618,6 @@ class DataEngineSupreme:
                 except:
                     pass
         
-        # Mock data
         file_status['Árbitros'] = "⚠️ Usando dados simulados"
         return pd.DataFrame({
             'Arbitro': ['Michael Oliver', 'Anthony Taylor', 'Martin Atkinson'],
@@ -528,48 +626,38 @@ class DataEngineSupreme:
         })
 
 # ==============================================================================
-# MATH ENGINE SUPREME
+# MATH ENGINE (mesmo da V36.0)
 # ==============================================================================
 
 class MathEngineSupreme:
-    """Motor matemático avançado com weighted averages e form factor"""
+    """Motor matemático avançado"""
     
     @staticmethod
     def weighted_average(values: np.ndarray, recent_weight: float = 0.6) -> float:
-        """Média ponderada com peso maior para jogos recentes"""
         if len(values) == 0:
             return 0.0
-        
         weights = np.linspace(1 - recent_weight, 1 + recent_weight, len(values))
         return np.average(values, weights=weights)
     
     @staticmethod
     def form_factor(recent_results: List[str], n_games: int = 5) -> float:
-        """
-        Calcula fator de forma baseado em resultados recentes
-        W = Win, D = Draw, L = Loss
-        Returns: multiplicador entre 0.85 e 1.15
-        """
         if not recent_results:
             return 1.0
-        
         recent = recent_results[-n_games:]
         wins = recent.count('W')
-        
         if wins >= 4:
-            return 1.15  # Forma excelente
+            return 1.15
         elif wins >= 3:
-            return 1.10  # Forma boa
+            return 1.10
         elif wins >= 2:
-            return 1.05  # Forma média
+            return 1.05
         elif wins >= 1:
-            return 0.95  # Forma ruim
+            return 0.95
         else:
-            return 0.85  # Forma péssima
+            return 0.85
     
     @staticmethod
     def volatility_index(values: np.ndarray) -> float:
-        """Calcula índice de volatilidade (CV%)"""
         if len(values) < 2:
             return 0.0
         mean = np.mean(values)
@@ -580,14 +668,11 @@ class MathEngineSupreme:
     
     @staticmethod
     def poisson_probability(lmbda: float, k: int) -> float:
-        """Probabilidade de Poisson"""
         return poisson.pmf(k, lmbda)
     
     @staticmethod
     def monte_carlo_simulation(lmbda: float, n_sims: int = 10000) -> Dict:
-        """Simulação Monte Carlo"""
         samples = np.random.poisson(lmbda, n_sims)
-        
         return {
             'samples': samples,
             'mean': float(np.mean(samples)),
@@ -602,43 +687,28 @@ class MathEngineSupreme:
     
     @staticmethod
     def kelly_criterion(prob: float, odds: float, bankroll: float, fraction: float = 0.25) -> float:
-        """Kelly Criterion com fração"""
         if odds <= 1 or prob <= 0 or prob >= 1:
             return 0.0
-        
         b = odds - 1
         q = 1 - prob
         kelly = (b * prob - q) / b
-        
         if kelly <= 0:
             return 0.0
-        
         return max(0, min(kelly * fraction * bankroll, bankroll * 0.05))
     
     @staticmethod
     def expected_value(prob: float, odds: float) -> float:
-        """Expected Value"""
         return (prob * (odds - 1)) - (1 - prob)
 
 # ==============================================================================
-# CONFIDENCE ENGINE
+# CONFIDENCE ENGINE (mesmo da V36.0)
 # ==============================================================================
 
 class ConfidenceEngine:
-    """Motor de cálculo de confiança (0-100)"""
+    """Motor de cálculo de confiança"""
     
     @staticmethod
-    def calculate_confidence(
-        n_games: int,
-        volatility: float,
-        h2h_consistency: float = 0.5
-    ) -> Tuple[int, str]:
-        """
-        Calcula score de confiança
-        Returns: (score 0-100, label)
-        """
-        
-        # Fator de amostra
+    def calculate_confidence(n_games: int, volatility: float, h2h_consistency: float = 0.5) -> Tuple[int, str]:
         if n_games >= 15:
             sample_score = 40
         elif n_games >= 10:
@@ -648,7 +718,6 @@ class ConfidenceEngine:
         else:
             sample_score = 10
         
-        # Fator de volatilidade
         if volatility < 20:
             volatility_score = 40
         elif volatility < 30:
@@ -658,14 +727,12 @@ class ConfidenceEngine:
         else:
             volatility_score = 10
         
-        # Fator H2H
         h2h_score = int(h2h_consistency * 20)
-        
         total_score = sample_score + volatility_score + h2h_score
         
-        if total_score >= THRESHOLDS['high_confidence']:
+        if total_score >= 80:
             label = "🟢 Alta"
-        elif total_score >= THRESHOLDS['medium_confidence']:
+        elif total_score >= 60:
             label = "🟡 Média"
         else:
             label = "🔴 Baixa"
@@ -674,20 +741,19 @@ class ConfidenceEngine:
     
     @staticmethod
     def get_confidence_color(score: int) -> str:
-        """Retorna cor baseada no score"""
-        if score >= THRESHOLDS['high_confidence']:
-            return "#D1FAE5"  # Verde claro
-        elif score >= THRESHOLDS['medium_confidence']:
-            return "#FEF3C7"  # Amarelo claro
+        if score >= 80:
+            return "#D1FAE5" if st.session_state.theme == 'light' else "#064e3b"
+        elif score >= 60:
+            return "#FEF3C7" if st.session_state.theme == 'light' else "#78350f"
         else:
-            return "#FEE2E2"  # Vermelho claro
+            return "#FEE2E2" if st.session_state.theme == 'light' else "#7f1d1d"
 
 # ==============================================================================
-# PREDICTION ENGINE SUPREME
+# PREDICTION ENGINE (mesmo da V36.0 mas com bookmaker comparison)
 # ==============================================================================
 
 class PredictionEngineSupreme:
-    """Motor de predição avançado com weighted averages, form factor, h2h"""
+    """Motor de predição avançado"""
     
     def __init__(self, df: pd.DataFrame):
         self.df = df
@@ -695,22 +761,17 @@ class PredictionEngineSupreme:
         self.confidence_engine = ConfidenceEngine()
     
     def predict_full(self, home_team: str, away_team: str, league: str = None) -> Optional[Dict]:
-        """Predição completa com todas as métricas"""
-        
-        # Buscar dados
         home_data = self.df[(self.df['HomeTeam'] == home_team) | (self.df['AwayTeam'] == home_team)]
         away_data = self.df[(self.df['HomeTeam'] == away_team) | (self.df['AwayTeam'] == away_team)]
         
         if home_data.empty or away_data.empty:
             return None
         
-        # Calcular estatísticas
         corners = self._calculate_corners(home_team, away_team, home_data, away_data)
         cards = self._calculate_cards(home_team, away_team, home_data, away_data)
         goals = self._calculate_goals(home_data, away_data)
         fouls = self._calculate_fouls(home_data, away_data)
         
-        # Calcular confiança
         volatility_home = self.math_engine.volatility_index(home_data['Total_Corners'].values)
         confidence_score, confidence_label = self.confidence_engine.calculate_confidence(
             n_games=min(len(home_data), len(away_data)),
@@ -737,22 +798,15 @@ class PredictionEngineSupreme:
             }
         }
     
-    def _calculate_corners(self, home_team: str, away_team: str, 
-                          home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
-        """Calcula escanteios com weighted average"""
-        
-        # Dados como mandante/visitante
+    def _calculate_corners(self, home_team: str, away_team: str, home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
         home_as_home = home_data[home_data['HomeTeam'] == home_team]
         away_as_away = away_data[away_data['AwayTeam'] == away_team]
         
-        # Weighted averages
         corners_home = self.math_engine.weighted_average(home_as_home['HC'].values[-10:]) if len(home_as_home) > 0 else 5.0
         corners_away = self.math_engine.weighted_average(away_as_away['AC'].values[-10:]) if len(away_as_away) > 0 else 4.5
         
-        # Aplicar multiplicadores
         corners_home_proj = corners_home * 1.15
         corners_away_proj = corners_away * 0.90
-        
         total = corners_home_proj + corners_away_proj
         
         return {
@@ -763,13 +817,9 @@ class PredictionEngineSupreme:
             'p95': int(np.ceil(total + 3.0))
         }
     
-    def _calculate_cards(self, home_team: str, away_team: str,
-                        home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
-        """Calcula cartões"""
-        
+    def _calculate_cards(self, home_team: str, away_team: str, home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
         cards_home = home_data['HY'].mean() if 'HY' in home_data.columns else 2.0
         cards_away = away_data['AY'].mean() if 'AY' in away_data.columns else 2.0
-        
         return {
             'home': cards_home,
             'away': cards_away,
@@ -777,7 +827,6 @@ class PredictionEngineSupreme:
         }
     
     def _calculate_goals(self, home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
-        """Calcula gols"""
         return {
             'home': home_data['FTHG'].mean(),
             'away': away_data['FTAG'].mean(),
@@ -785,7 +834,6 @@ class PredictionEngineSupreme:
         }
     
     def _calculate_fouls(self, home_data: pd.DataFrame, away_data: pd.DataFrame) -> Dict:
-        """Calcula faltas"""
         return {
             'home': home_data['HF'].mean(),
             'away': away_data['AF'].mean(),
@@ -793,15 +841,12 @@ class PredictionEngineSupreme:
         }
     
     def generate_all_lines(self, prediction: Dict) -> List[Dict]:
-        """Gera todas as linhas de aposta com probabilidades"""
-        
         lines = []
         corners_total = prediction['corners']['total']
         corners_home = prediction['corners']['home']
         corners_away = prediction['corners']['away']
         cards_total = prediction['cards']['total']
         
-        # Escanteios totais
         for threshold in [8.5, 9.5, 10.5, 11.5, 12.5, 13.5]:
             prob = 1 - poisson.cdf(int(threshold), corners_total)
             lines.append({
@@ -812,7 +857,6 @@ class PredictionEngineSupreme:
                 'icon': '⚽'
             })
         
-        # Escanteios casa
         for threshold in [2.5, 3.5, 4.5, 5.5]:
             prob = 1 - poisson.cdf(int(threshold), corners_home)
             lines.append({
@@ -823,7 +867,6 @@ class PredictionEngineSupreme:
                 'icon': '🏠'
             })
         
-        # Escanteios fora
         for threshold in [2.5, 3.5, 4.5, 5.5]:
             prob = 1 - poisson.cdf(int(threshold), corners_away)
             lines.append({
@@ -834,7 +877,6 @@ class PredictionEngineSupreme:
                 'icon': '✈️'
             })
         
-        # Cartões
         for threshold in [2.5, 3.5, 4.5, 5.5]:
             prob = 1 - poisson.cdf(int(threshold), cards_total)
             lines.append({
@@ -848,29 +890,27 @@ class PredictionEngineSupreme:
         return lines
     
     def find_smart_line(self, prediction: Dict) -> Dict:
-        """Encontra a linha ÓTIMA automaticamente"""
-        
         all_lines = self.generate_all_lines(prediction)
-        
-        # Filtrar linhas com prob entre 60% e 75% (sweet spot)
         good_lines = [l for l in all_lines if 60 <= l['prob'] <= 75]
-        
         if not good_lines:
             good_lines = [l for l in all_lines if l['prob'] >= 55]
-        
         if good_lines:
-            # Ordenar por probabilidade
-            best_line = max(good_lines, key=lambda x: x['prob'])
-            return best_line
-        
+            return max(good_lines, key=lambda x: x['prob'])
         return None
+    
+    def get_bookmaker_odds(self, base_odd: float = 1.90) -> Dict:
+        """Simula odds de diferentes bookmakers"""
+        odds = {}
+        for bookie, config in BOOKMAKERS.items():
+            odds[bookie] = round(base_odd * config['factor'], 2)
+        return odds
 
 # ==============================================================================
-# ORÁCULO SUPREME
+# ORÁCULO SUPREME (mesmo da V36.0)
 # ==============================================================================
 
 class OraculoSupreme:
-    """Oráculo com recomendações automáticas e análise avançada"""
+    """Oráculo com recomendações automáticas"""
     
     def __init__(self, df: pd.DataFrame, refs: pd.DataFrame, calendar: pd.DataFrame, predictor: PredictionEngineSupreme):
         self.df = df
@@ -878,12 +918,21 @@ class OraculoSupreme:
         self.calendar = calendar
         self.predictor = predictor
     
-    def auto_recommendations(self, n_games: int = 5) -> List[Dict]:
-        """Gera recomendações automáticas dos melhores jogos"""
+    def auto_recommendations(self, date_filter: str = None, league_filter: str = 'Todas', n_games: int = 5) -> List[Dict]:
+        """Gera recomendações filtradas por data e liga"""
         
         recommendations = []
+        calendar = self.calendar.copy()
         
-        for _, row in self.calendar.head(20).iterrows():
+        # Filtrar por data
+        if date_filter:
+            calendar = calendar[calendar['Data'] == date_filter]
+        
+        # Filtrar por liga
+        if league_filter != 'Todas':
+            calendar = calendar[calendar['Liga'] == league_filter]
+        
+        for _, row in calendar.head(30).iterrows():
             home = row['HomeTeam']
             away = row['AwayTeam']
             
@@ -896,6 +945,7 @@ class OraculoSupreme:
                     recommendations.append({
                         'jogo': f"{home} x {away}",
                         'data': row.get('Data', 'N/A'),
+                        'liga': row.get('Liga', 'N/A'),
                         'linha': smart_line['mercado'],
                         'prob': smart_line['prob'],
                         'confidence': pred['confidence']['score'],
@@ -903,21 +953,15 @@ class OraculoSupreme:
                         'pred': pred
                     })
         
-        # Ordenar por EV
         recommendations = sorted(recommendations, key=lambda x: x['ev'], reverse=True)
-        
         return recommendations[:n_games]
     
     def _estimate_ev(self, prob: float) -> float:
-        """Estima EV assumindo odd de 1.90"""
         return MathEngineSupreme.expected_value(prob / 100, 1.90) * 100
     
     def processar_chat(self, query: str, contexto: Dict) -> Dict:
-        """Processa queries do chat"""
-        
         query_lower = query.lower()
         
-        # Identificar intenção
         if any(w in query_lower for w in ['analisa', 'analise', ' x ', 'vs']):
             return self._analise_completa(query, contexto)
         elif any(w in query_lower for w in ['top', 'melhores', 'recomenda']):
@@ -928,8 +972,6 @@ class OraculoSupreme:
             return self._fallback()
     
     def _analise_completa(self, query: str, contexto: Dict) -> Dict:
-        """Análise completa com projeções individuais"""
-        
         times = self._extrair_times(query)
         
         if len(times) < 2:
@@ -947,13 +989,7 @@ class OraculoSupreme:
                 'tipo': 'erro'
             }
         
-        # Salvar contexto
-        contexto['ultimo_jogo'] = {
-            'nome': f"{home} x {away}",
-            'pred': pred
-        }
-        
-        # Encontrar melhor linha
+        contexto['ultimo_jogo'] = {'nome': f"{home} x {away}", 'pred': pred}
         smart_line = self.predictor.find_smart_line(pred)
         
         texto = f"""
@@ -997,15 +1033,14 @@ class OraculoSupreme:
 {'<div class="card-success">#### 🎯 LINHA RECOMENDADA: ' + smart_line["mercado"] + f' (Prob: {smart_line["prob"]:.1f}%)</div>' if smart_line else ''}
 """
         
-        return {
-            'texto': texto,
-            'tipo': 'analise'
-        }
+        return {'texto': texto, 'tipo': 'analise'}
     
     def _top_jogos(self, contexto: Dict) -> Dict:
-        """Retorna top jogos do dia"""
-        
-        recomendacoes = self.auto_recommendations(5)
+        recomendacoes = self.auto_recommendations(
+            date_filter=st.session_state.dashboard_date,
+            league_filter=st.session_state.dashboard_league,
+            n_games=5
+        )
         
         if not recomendacoes:
             return {
@@ -1029,36 +1064,22 @@ class OraculoSupreme:
 </div>
 """
         
-        return {
-            'texto': texto,
-            'tipo': 'recomendacoes'
-        }
+        return {'texto': texto, 'tipo': 'recomendacoes'}
     
     def _comparacao(self, query: str, contexto: Dict) -> Dict:
-        """Compara com jogo anterior"""
-        
         if 'ultimo_jogo' not in contexto:
-            return {
-                'texto': '⚠️ Analise um jogo primeiro para comparar.',
-                'tipo': 'erro'
-            }
+            return {'texto': '⚠️ Analise um jogo primeiro para comparar.', 'tipo': 'erro'}
         
         times = self._extrair_times(query)
         
         if len(times) < 2:
-            return {
-                'texto': '⚠️ Especifique o jogo para comparar.',
-                'tipo': 'erro'
-            }
+            return {'texto': '⚠️ Especifique o jogo para comparar.', 'tipo': 'erro'}
         
         home, away = times[0], times[1]
         pred_novo = self.predictor.predict_full(home, away)
         
         if not pred_novo:
-            return {
-                'texto': f'⚠️ Dados insuficientes para {home} x {away}.',
-                'tipo': 'erro'
-            }
+            return {'texto': f'⚠️ Dados insuficientes para {home} x {away}.', 'tipo': 'erro'}
         
         ultimo = contexto['ultimo_jogo']
         pred_antigo = ultimo['pred']
@@ -1077,13 +1098,9 @@ class OraculoSupreme:
 **Melhor Jogo:** {'Anterior' if pred_antigo['confidence']['score'] > pred_novo['confidence']['score'] else 'Novo'}
 """
         
-        return {
-            'texto': texto,
-            'tipo': 'comparacao'
-        }
+        return {'texto': texto, 'tipo': 'comparacao'}
     
     def _extrair_times(self, query: str) -> List[str]:
-        """Extrai nomes de times"""
         all_teams = list(self.df['HomeTeam'].unique())
         words = re.findall(r'[A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s[A-ZÀ-Ÿ][a-zà-ÿ]+)*', query)
         
@@ -1117,16 +1134,14 @@ class UIComponents:
     
     @staticmethod
     def badge(text: str, type: str = "info") -> str:
-        """Badge colorido"""
         return f'<span class="badge-{type}">{text}</span>'
     
     @staticmethod
     def progress_bar(value: float, max_value: float = 100, label: str = "") -> str:
-        """Barra de progresso"""
         percentage = min((value / max_value) * 100, 100)
         return f"""
-        <div class="progress-bar">
-            <div class="progress-fill" style="width: {percentage}%">
+        <div style="background-color: {'#F1F5F9' if st.session_state.theme == 'light' else '#334155'}; border-radius: 12px; height: 28px; overflow: hidden; border: 2px solid {'#E2E8F0' if st.session_state.theme == 'light' else '#475569'};">
+            <div style="background: linear-gradient(90deg, #3B82F6 0%, #2563EB 100%); height: 100%; width: {percentage}%; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 13px;">
                 {label or f'{percentage:.0f}%'}
             </div>
         </div>
@@ -1134,7 +1149,6 @@ class UIComponents:
     
     @staticmethod
     def value_meter(score: int, label: str = "Valor") -> str:
-        """Medidor de valor visual"""
         if score >= 80:
             class_name = "value-meter-high"
             icon = "🟢"
@@ -1146,30 +1160,125 @@ class UIComponents:
             icon = "🔴"
         
         return f"""
-        <div class="value-meter {class_name}">
+        <div class="value-meter {class_name}" style="background: {'white' if st.session_state.theme == 'light' else '#1e293b'}; border: 2px solid {'#E2E8F0' if st.session_state.theme == 'light' else '#475569'}; border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 4px 12px rgba(0, 0, 0, {'0.05' if st.session_state.theme == 'light' else '0.4'});">
             <div style="font-size: 32px; margin-bottom: 8px;">{icon}</div>
             <div style="font-size: 14px; font-weight: 600; color: #64748B; margin-bottom: 4px;">{label}</div>
-            <div style="font-size: 28px; font-weight: 800; color: #1E293B;">{score}/100</div>
+            <div style="font-size: 28px; font-weight: 800; color: {'#1E293B' if st.session_state.theme == 'light' else '#f1f5f9'};">{score}/100</div>
         </div>
         """
     
     @staticmethod
     def card(content: str, type: str = "light") -> str:
-        """Card estilizado"""
         return f'<div class="card-{type}">{content}</div>'
+    
+    @staticmethod
+    def favorite_button(game_id: str, game_name: str) -> bool:
+        """Botão de favorito que retorna True se clicado"""
+        is_fav = Utils.is_favorite(game_id)
+        icon = "⭐" if is_fav else "☆"
+        
+        if st.button(icon, key=f"fav_{game_id}"):
+            if is_fav:
+                Utils.remove_from_favorites(game_id)
+            else:
+                Utils.add_to_favorites(game_id, game_name)
+            return True
+        return False
 
 # ==============================================================================
-# ANALYTICS ENGINE
+# EXPORT ENGINE (NOVO!)
+# ==============================================================================
+
+class ExportEngine:
+    """Motor de exportação de bilhetes"""
+    
+    @staticmethod
+    def create_ticket_image(bilhete: List[Dict], odd_combinada: float) -> BytesIO:
+        """Cria imagem PNG do bilhete"""
+        
+        # Configurações
+        width = 600
+        height = 200 + (len(bilhete) * 80)
+        bg_color = (255, 255, 255) if st.session_state.theme == 'light' else (30, 41, 59)
+        text_color = (30, 41, 59) if st.session_state.theme == 'light' else (241, 245, 249)
+        accent_color = (59, 130, 246)
+        
+        # Criar imagem
+        img = Image.new('RGB', (width, height), bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        # Título
+        y = 20
+        draw.text((width//2, y), "🎫 FutPrevisão - Bilhete", fill=accent_color, anchor="mm", font=None)
+        y += 40
+        
+        draw.line([(20, y), (width-20, y)], fill=accent_color, width=2)
+        y += 20
+        
+        # Seleções
+        for i, sel in enumerate(bilhete):
+            draw.text((30, y), f"#{i+1} {sel['jogo']}", fill=text_color, font=None)
+            y += 20
+            draw.text((50, y), f"{sel['mercado']} @ {sel['odd']:.2f}", fill=text_color, font=None)
+            y += 30
+        
+        # Odd combinada
+        y += 10
+        draw.line([(20, y), (width-20, y)], fill=accent_color, width=2)
+        y += 20
+        draw.text((width//2, y), f"ODD COMBINADA: {odd_combinada:.2f}", fill=accent_color, anchor="mm", font=None)
+        
+        # Converter para bytes
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return buf
+
+# ==============================================================================
+# ANALYTICS ENGINE (COM HISTORICAL TRACKING)
 # ==============================================================================
 
 class AnalyticsEngine:
     """Motor de analytics e tracking"""
     
     @staticmethod
-    def calculate_roi(bets: List[Dict]) -> Dict:
+    def add_bet(bet_data: Dict):
+        """Adiciona aposta ao histórico"""
+        if 'bets_history' not in st.session_state:
+            st.session_state.bets_history = []
+        
+        bet_data['id'] = len(st.session_state.bets_history)
+        bet_data['timestamp'] = datetime.now().isoformat()
+        st.session_state.bets_history.append(bet_data)
+    
+    @staticmethod
+    def update_bet_result(bet_id: int, result: str, return_value: float = 0):
+        """Atualiza resultado de uma aposta"""
+        for bet in st.session_state.bets_history:
+            if bet['id'] == bet_id:
+                bet['result'] = result
+                bet['return'] = return_value
+                
+                # Atualizar streak
+                if result == 'win':
+                    st.session_state.streak['current'] += 1
+                    st.session_state.streak['total_wins'] += 1
+                    if st.session_state.streak['current'] > st.session_state.streak['best']:
+                        st.session_state.streak['best'] = st.session_state.streak['current']
+                else:
+                    st.session_state.streak['current'] = 0
+                
+                st.session_state.streak['total_bets'] += 1
+                break
+    
+    @staticmethod
+    def calculate_roi(bets: List[Dict] = None) -> Dict:
         """Calcula ROI"""
+        if bets is None:
+            bets = st.session_state.bets_history
+        
         if not bets:
-            return {'roi': 0, 'total_stake': 0, 'total_return': 0}
+            return {'roi': 0, 'total_stake': 0, 'total_return': 0, 'profit': 0}
         
         total_stake = sum(b.get('stake', 0) for b in bets)
         total_return = sum(b.get('return', 0) for b in bets if b.get('result') == 'win')
@@ -1184,13 +1293,20 @@ class AnalyticsEngine:
         }
     
     @staticmethod
-    def win_rate(bets: List[Dict]) -> float:
+    def win_rate(bets: List[Dict] = None) -> float:
         """Calcula win rate"""
+        if bets is None:
+            bets = st.session_state.bets_history
+        
         if not bets:
             return 0.0
         
-        wins = sum(1 for b in bets if b.get('result') == 'win')
-        return (wins / len(bets)) * 100
+        completed = [b for b in bets if b.get('result') in ['win', 'loss']]
+        if not completed:
+            return 0.0
+        
+        wins = sum(1 for b in completed if b.get('result') == 'win')
+        return (wins / len(completed)) * 100
 
 # ==============================================================================
 # VISUALIZATION ENGINE
@@ -1201,8 +1317,6 @@ class VisualizationEngine:
     
     @staticmethod
     def radar_chart(home_stats: Dict, away_stats: Dict, home_name: str, away_name: str):
-        """Gráfico de radar comparativo"""
-        
         categories = ['Escanteios', 'Cartões', 'Gols', 'Faltas']
         
         fig = go.Figure()
@@ -1227,47 +1341,16 @@ class VisualizationEngine:
             fillcolor='rgba(16, 185, 129, 0.3)'
         ))
         
+        theme = st.session_state.theme
+        
         fig.update_layout(
             polar=dict(
                 radialaxis=dict(visible=True, range=[0, 15]),
-                bgcolor='#F8FAFC'
+                bgcolor='#F8FAFC' if theme == 'light' else '#1e293b'
             ),
             showlegend=True,
-            paper_bgcolor='white',
-            font=dict(color='#1E293B', size=12),
-            height=400
-        )
-        
-        return fig
-    
-    @staticmethod
-    def confidence_heatmap(games_data: List[Dict]):
-        """Heatmap de confiança dos jogos"""
-        
-        if not games_data:
-            return None
-        
-        jogos = [g['nome'] for g in games_data]
-        confidence_scores = [g.get('confidence', 0) for g in games_data]
-        
-        fig = go.Figure(data=go.Bar(
-            x=jogos,
-            y=confidence_scores,
-            marker=dict(
-                color=confidence_scores,
-                colorscale=[[0, '#FEE2E2'], [0.5, '#FEF3C7'], [1, '#D1FAE5']],
-                showscale=True,
-                colorbar=dict(title="Confiança")
-            )
-        ))
-        
-        fig.update_layout(
-            title="Mapa de Confiança dos Jogos",
-            xaxis_title="Jogos",
-            yaxis_title="Score de Confiança",
-            paper_bgcolor='white',
-            plot_bgcolor='#F8FAFC',
-            font=dict(color='#1E293B'),
+            paper_bgcolor='white' if theme == 'light' else '#0f172a',
+            font=dict(color='#1E293B' if theme == 'light' else '#f1f5f9', size=12),
             height=400
         )
         
@@ -1280,49 +1363,40 @@ class VisualizationEngine:
 def main():
     """Aplicação principal"""
     
-    # ===== CARREGAR DADOS =====
+    # Carregar dados
     try:
         df, calendar, refs, file_status = DataEngineSupreme.load_all_data()
         predictor = PredictionEngineSupreme(df)
         oraculo = OraculoSupreme(df, refs, calendar, predictor)
         ui = UIComponents()
         viz = VisualizationEngine()
+        export = ExportEngine()
+        analytics = AnalyticsEngine()
     except Exception as e:
         st.error(f"❌ Erro ao carregar dados: {e}")
         st.stop()
     
-    # ===== SESSION STATE =====
-    if 'contexto_oraculo' not in st.session_state:
-        st.session_state.contexto_oraculo = {
-            'historico': [],
-            'banca': 1000.0
-        }
-    
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-    
-    if 'bilhete' not in st.session_state:
-        st.session_state.bilhete = []
-    
-    if 'bets_history' not in st.session_state:
-        st.session_state.bets_history = []
-    
-    # ===== SIDEBAR =====
+    # Sidebar
     with st.sidebar:
         st.markdown(f"## ⚽ {VERSION}")
         st.caption(f"Por {AUTHOR}")
         
         st.markdown("---")
         
-        st.markdown("### 📂 Status dos Arquivos")
-        for file, status in file_status.items():
-            if "✅" in status:
-                st.success(f"{file}: {status}")
-            else:
-                st.warning(f"{file}: {status}")
+        # NOVO: Dark Mode Toggle
+        col_theme1, col_theme2 = st.columns(2)
+        if col_theme1.button("☀️ Claro", use_container_width=True):
+            st.session_state.theme = 'light'
+            st.rerun()
+        if col_theme2.button("🌙 Escuro", use_container_width=True):
+            st.session_state.theme = 'dark'
+            st.rerun()
+        
+        st.markdown(f"**Tema Atual:** {'☀️ Claro' if st.session_state.theme == 'light' else '🌙 Escuro'}")
         
         st.markdown("---")
         
+        # Banca
         st.metric("💰 Banca Atual", f"R$ {st.session_state.contexto_oraculo['banca']:.2f}")
         
         nova_banca = st.number_input(
@@ -1338,76 +1412,142 @@ def main():
         
         st.markdown("---")
         
+        # NOVO: Streak Tracker
+        st.markdown("### 🔥 Streak Tracker")
+        streak = st.session_state.streak
+        st.metric("Sequência Atual", f"{streak['current']} 🔥")
+        st.metric("Melhor Sequência", f"{streak['best']} 🏆")
+        if streak['total_bets'] > 0:
+            wr = (streak['total_wins'] / streak['total_bets']) * 100
+            st.metric("Win Rate Global", f"{wr:.1f}%")
+        
+        st.markdown("---")
+        
+        # NOVO: Alertas
+        st.markdown("### 🔔 Alertas")
+        n_alerts = len(st.session_state.alerts)
+        if n_alerts > 0:
+            st.info(f"{n_alerts} alerta(s) ativo(s)")
+            for alert in st.session_state.alerts[:3]:
+                st.caption(f"• {alert.get('message', '')}")
+        else:
+            st.caption("Nenhum alerta no momento")
+        
+        st.markdown("---")
+        
+        # Status dos arquivos
+        st.markdown("### 📂 Status dos Arquivos")
+        for file, stat in file_status.items():
+            if "✅" in stat:
+                st.success(f"{file}: ✅")
+            else:
+                st.warning(f"{file}: ⚠️")
+        
+        st.markdown("---")
+        
         if st.button("🔄 Limpar Cache", use_container_width=True):
             st.cache_data.clear()
             st.success("✅ Cache limpo!")
             st.rerun()
     
-    # ===== TABS =====
+    # Tabs
     tabs = st.tabs([
-        "🏠 Dashboard", "🔨 Construtor", "🧠 Oráculo", "📅 Calendário",
-        "🎯 Análise", "🔍 Scanner", "📊 Ligas", "👥 Times",
-        "👨‍⚖️ Árbitros", "🎲 Monte Carlo", "📈 Analytics", "⚙️ Config"
+        "🏠 Dashboard", "🔨 Construtor", "🧠 Oráculo", "⭐ Favoritos",
+        "📅 Calendário", "🎯 Análise", "⚖️ Comparação", "🔍 Scanner",
+        "📊 Ligas", "👥 Times", "🎲 Monte Carlo", "📈 Histórico"
     ])
     
-    # ===== ABA 1: DASHBOARD SUPREME =====
+    # ABA 1: DASHBOARD COM FILTROS
     with tabs[0]:
         st.markdown("# 🏠 Dashboard Supreme")
+        
+        # NOVO: Filtros de Data e Liga
+        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+        
+        with col_f1:
+            # Pegar datas únicas do calendário
+            datas_disponiveis = sorted(calendar['Data'].unique())
+            
+            # Garantir que a data no session_state existe
+            if st.session_state.dashboard_date not in datas_disponiveis:
+                st.session_state.dashboard_date = datetime.today().strftime("%d/%m/%Y")
+            
+            selected_date = st.selectbox(
+                "📅 Data:",
+                datas_disponiveis,
+                index=datas_disponiveis.index(st.session_state.dashboard_date) if st.session_state.dashboard_date in datas_disponiveis else 0,
+                key="dash_date_select"
+            )
+            st.session_state.dashboard_date = selected_date
+        
+        with col_f2:
+            ligas = ['Todas'] + list(LEAGUE_FILES.keys())
+            selected_league = st.selectbox(
+                "🏆 Liga:",
+                ligas,
+                index=ligas.index(st.session_state.dashboard_league),
+                key="dash_league_select"
+            )
+            st.session_state.dashboard_league = selected_league
+        
+        with col_f3:
+            if st.button("📅 Hoje", use_container_width=True):
+                st.session_state.dashboard_date = datetime.today().strftime("%d/%m/%Y")
+                st.rerun()
+        
+        st.markdown("---")
         
         # Métricas principais
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric(
-                "📊 Jogos na Base",
-                f"{len(df):,}",
-                delta="+30 esta semana"
-            )
+            st.metric("📊 Jogos na Base", f"{len(df):,}", delta="+30 esta semana")
         
         with col2:
-            st.metric(
-                "⚽ Média Escanteios",
-                f"{df['Total_Corners'].mean():.2f}",
-                delta=f"{(df['Total_Corners'].mean() - 10):.2f}"
-            )
+            st.metric("⚽ Média Escanteios", f"{df['Total_Corners'].mean():.2f}", delta=f"{(df['Total_Corners'].mean() - 10):.2f}")
         
         with col3:
-            st.metric(
-                "🟨 Média Cartões",
-                f"{df['Total_Cards'].mean():.2f}",
-                delta=f"{(df['Total_Cards'].mean() - 4):.2f}"
-            )
+            st.metric("🟨 Média Cartões", f"{df['Total_Cards'].mean():.2f}", delta=f"{(df['Total_Cards'].mean() - 4):.2f}")
         
         with col4:
-            st.metric(
-                "🎯 Média Gols",
-                f"{df['Total_Goals'].mean():.2f}",
-                delta=f"{(df['Total_Goals'].mean() - 2.5):.2f}"
-            )
+            st.metric("🎯 Média Gols", f"{df['Total_Goals'].mean():.2f}", delta=f"{(df['Total_Goals'].mean() - 2.5):.2f}")
         
         st.markdown("---")
         
-        # Recomendações automáticas
+        # Recomendações automáticas com filtros
         st.markdown("## 🔥 Recomendações do Dia")
+        st.caption(f"Filtrado por: {selected_date} | Liga: {selected_league}")
         
         with st.spinner("🧠 Analisando oportunidades..."):
-            recomendacoes = oraculo.auto_recommendations(5)
+            recomendacoes = oraculo.auto_recommendations(
+                date_filter=selected_date,
+                league_filter=selected_league,
+                n_games=5
+            )
         
         if recomendacoes:
             for i, rec in enumerate(recomendacoes):
                 with st.container():
-                    st.markdown(f"""
-                    <div class="card-success fade-in">
-                        <h3>#{i+1} {rec['jogo']}</h3>
-                        <p><strong>📅 Data:</strong> {rec['data']}</p>
-                        <p><strong>💎 Linha:</strong> {rec['linha']}</p>
-                        <p><strong>📊 Probabilidade:</strong> {rec['prob']:.1f}%</p>
-                        <p><strong>🎯 Confiança:</strong> {rec['confidence']}/100</p>
-                        <p><strong>📈 EV Estimado:</strong> {rec['ev']:+.1f}%</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    col_rec1, col_rec2 = st.columns([5, 1])
+                    
+                    with col_rec1:
+                        st.markdown(f"""
+                        <div class="card-success fade-in">
+                            <h3>#{i+1} {rec['jogo']}</h3>
+                            <p><strong>📅 Data:</strong> {rec['data']} | <strong>🏆 Liga:</strong> {rec['liga']}</p>
+                            <p><strong>💎 Linha:</strong> {rec['linha']}</p>
+                            <p><strong>📊 Probabilidade:</strong> {rec['prob']:.1f}%</p>
+                            <p><strong>🎯 Confiança:</strong> {rec['confidence']}/100</p>
+                            <p><strong>📈 EV Estimado:</strong> {rec['ev']:+.1f}%</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col_rec2:
+                        # NOVO: Botão de favorito
+                        game_id = f"{rec['jogo']}_{rec['data']}"
+                        ui.favorite_button(game_id, rec['jogo'])
         else:
-            st.info("Nenhuma oportunidade de alta confiança no momento.")
+            st.info(f"Nenhuma oportunidade de alta confiança encontrada para {selected_date} ({selected_league}).")
         
         st.markdown("---")
         
@@ -1420,30 +1560,29 @@ def main():
             color_discrete_sequence=['#3B82F6']
         )
         
+        theme = st.session_state.theme
         fig.update_layout(
-            paper_bgcolor='white',
-            plot_bgcolor='#F8FAFC',
-            font=dict(color='#1E293B'),
+            paper_bgcolor='white' if theme == 'light' else '#0f172a',
+            plot_bgcolor='#F8FAFC' if theme == 'light' else '#1e293b',
+            font=dict(color='#1E293B' if theme == 'light' else '#f1f5f9'),
             xaxis_title="Escanteios por Jogo",
             yaxis_title="Frequência"
         )
         
         st.plotly_chart(fig, use_container_width=True)
     
-    # ===== ABA 2: CONSTRUTOR EVOLUTION =====
+    # ABA 2: CONSTRUTOR COM BOOKMAKER COMPARISON + PROFIT CALCULATOR + EXPORT
     with tabs[1]:
-        st.markdown("# 🔨 Construtor de Bilhetes")
+        st.markdown("# 🔨 Construtor de Bilhetes ULTIMATE")
         
         col_const1, col_const2 = st.columns([2, 1])
         
         with col_const1:
             st.markdown("### 📅 Selecionar Jogo")
             
-            # Filtro de data
             datas = sorted(calendar['Data'].unique())
             data_sel = st.selectbox("📆 Data:", datas, key="const_data")
             
-            # Filtrar jogos
             jogos_dia = calendar[calendar['Data'] == data_sel]
             
             if not jogos_dia.empty:
@@ -1453,20 +1592,37 @@ def main():
                 if jogo_sel:
                     home, away = jogo_sel.split(' x ')
                     
-                    # Predição
                     with st.spinner("🔮 Calculando..."):
                         pred = predictor.predict_full(home, away)
                     
                     if pred:
-                        # Mostrar confiança
                         st.markdown(ui.value_meter(pred['confidence']['score'], "Confiança"), unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+                        
+                        # NOVO: Bookmaker Comparison
+                        st.markdown("### 💰 Comparação de Bookmakers")
+                        base_odd = 1.90
+                        bookmaker_odds = predictor.get_bookmaker_odds(base_odd)
+                        
+                        best_bookie = max(bookmaker_odds, key=bookmaker_odds.get)
+                        best_odd = bookmaker_odds[best_bookie]
+                        
+                        cols_book = st.columns(5)
+                        for i, (bookie, odd) in enumerate(bookmaker_odds.items()):
+                            with cols_book[i]:
+                                if bookie == best_bookie:
+                                    st.success(f"⭐ **{bookie}**")
+                                    st.metric("Odd", f"{odd:.2f}", delta=f"+{((odd-base_odd)/base_odd*100):.1f}%")
+                                else:
+                                    st.info(f"**{bookie}**")
+                                    st.metric("Odd", f"{odd:.2f}")
                         
                         st.markdown("---")
                         
                         # Gerar linhas
                         all_lines = predictor.generate_all_lines(pred)
                         
-                        # Agrupar por tipo
                         tipos = {}
                         for line in all_lines:
                             tipo = line['tipo']
@@ -1474,7 +1630,6 @@ def main():
                                 tipos[tipo] = []
                             tipos[tipo].append(line)
                         
-                        # Exibir linhas
                         st.markdown("### 📊 Linhas Disponíveis")
                         
                         for tipo, linhas in tipos.items():
@@ -1490,7 +1645,7 @@ def main():
                                         st.session_state.bilhete.append({
                                             'jogo': jogo_sel,
                                             'mercado': linha['mercado'],
-                                            'odd': 1.90,
+                                            'odd': best_odd,  # Usa melhor odd
                                             'prob': linha['prob']
                                         })
                                         st.rerun()
@@ -1526,13 +1681,45 @@ def main():
                 stake = MathEngineSupreme.kelly_criterion(0.60, odd_comb, st.session_state.contexto_oraculo['banca'])
                 st.metric("💰 Stake Kelly", f"R$ {stake:.2f}")
                 
-                if st.button("🗑️ Limpar Tudo", use_container_width=True):
+                st.markdown("---")
+                
+                # NOVO: Profit Calculator
+                st.markdown("### 💵 Calculadora de Lucro")
+                banca_atual = st.session_state.contexto_oraculo['banca']
+                
+                if stake > 0:
+                    lucro_se_ganhar = stake * (odd_comb - 1)
+                    banca_se_ganhar = banca_atual + lucro_se_ganhar
+                    banca_se_perder = banca_atual - stake
+                    
+                    st.success(f"✅ **Se GANHAR:** +R$ {lucro_se_ganhar:.2f}")
+                    st.caption(f"Banca: R$ {banca_se_ganhar:.2f}")
+                    
+                    st.error(f"❌ **Se PERDER:** -R$ {stake:.2f}")
+                    st.caption(f"Banca: R$ {banca_se_perder:.2f}")
+                
+                st.markdown("---")
+                
+                col_btn1, col_btn2 = st.columns(2)
+                
+                # NOVO: Export para PNG
+                if col_btn1.button("📸 Exportar PNG", use_container_width=True):
+                    img_bytes = export.create_ticket_image(st.session_state.bilhete, odd_comb)
+                    st.download_button(
+                        label="⬇️ Download PNG",
+                        data=img_bytes,
+                        file_name=f"bilhete_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+                
+                if col_btn2.button("🗑️ Limpar", use_container_width=True):
                     st.session_state.bilhete = []
                     st.rerun()
             else:
                 st.info("Nenhuma seleção adicionada ainda.")
     
-    # ===== ABA 3: ORÁCULO SUPREME =====
+    # ABA 3: ORÁCULO (mesmo da V36.0)
     with tabs[2]:
         st.markdown("# 🧠 Oráculo Supreme")
         
@@ -1547,15 +1734,12 @@ def main():
         
         st.markdown("---")
         
-        # Chat history
         for msg in st.session_state.chat_history:
             with st.chat_message(msg['role'], avatar=msg['avatar']):
                 st.markdown(msg['content'], unsafe_allow_html=True)
         
-        # Input
         if prompt := st.chat_input("💬 Pergunte ao Oráculo..."):
             
-            # Adicionar user message
             st.session_state.chat_history.append({
                 'role': 'user',
                 'content': prompt,
@@ -1565,13 +1749,11 @@ def main():
             with st.chat_message('user', avatar='👤'):
                 st.markdown(prompt)
             
-            # Processar
             with st.chat_message('assistant', avatar='🧠'):
                 with st.spinner("🧠 Analisando..."):
                     resultado = oraculo.processar_chat(prompt, st.session_state.contexto_oraculo)
                     st.markdown(resultado['texto'], unsafe_allow_html=True)
             
-            # Adicionar assistant message
             st.session_state.chat_history.append({
                 'role': 'assistant',
                 'content': resultado['texto'],
@@ -1580,11 +1762,35 @@ def main():
             
             st.rerun()
     
-    # ===== ABA 4: CALENDÁRIO =====
+    # ABA 4: FAVORITOS (NOVO!)
     with tabs[3]:
+        st.markdown("# ⭐ Meus Favoritos")
+        
+        if st.session_state.favorites:
+            st.success(f"Você tem {len(st.session_state.favorites)} jogo(s) favoritado(s)")
+            
+            for fav in st.session_state.favorites:
+                col1, col2 = st.columns([5, 1])
+                
+                with col1:
+                    st.markdown(f"""
+                    <div class="card-light">
+                        <h4>⭐ {fav['name']}</h4>
+                        <p>Adicionado em: {datetime.fromisoformat(fav['added_at']).strftime('%d/%m/%Y %H:%M')}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    if st.button("🗑️", key=f"del_fav_{fav['id']}"):
+                        Utils.remove_from_favorites(fav['id'])
+                        st.rerun()
+        else:
+            st.info("Você ainda não tem favoritos. Adicione jogos clicando em ⭐ no Dashboard!")
+    
+    # ABA 5: CALENDÁRIO
+    with tabs[4]:
         st.markdown("# 📅 Calendário de Jogos")
         
-        # Filtro de data
         datas_cal = sorted(calendar['Data'].unique())
         filtro_data = st.selectbox("📆 Filtrar por Data:", ["Todas"] + list(datas_cal))
         
@@ -1594,8 +1800,8 @@ def main():
             cal_filtrado = calendar[calendar['Data'] == filtro_data]
             st.dataframe(cal_filtrado, use_container_width=True, height=600)
     
-    # ===== ABA 5: ANÁLISE 360° =====
-    with tabs[4]:
+    # ABA 6: ANÁLISE 360°
+    with tabs[5]:
         st.markdown("# 🎯 Análise 360°")
         
         teams = sorted(list(df['HomeTeam'].unique()))
@@ -1613,8 +1819,6 @@ def main():
                     if pred:
                         st.success("✅ Análise concluída!")
                         
-                        # Overview
-                        st.markdown("### 📊 Overview")
                         col1, col2, col3, col4 = st.columns(4)
                         
                         col1.metric("Escanteios", f"{pred['corners']['total']:.2f}")
@@ -1624,7 +1828,6 @@ def main():
                         
                         st.markdown("---")
                         
-                        # Radar chart
                         st.markdown("### 📊 Comparação Visual")
                         
                         home_stats = {
@@ -1646,7 +1849,6 @@ def main():
                         
                         st.markdown("---")
                         
-                        # Todas as linhas
                         st.markdown("### 📋 Todas as Linhas")
                         
                         all_lines = predictor.generate_all_lines(pred)
@@ -1663,8 +1865,69 @@ def main():
                     else:
                         st.error("❌ Dados insuficientes para análise.")
     
-    # ===== ABA 6: SCANNER MULTI-CRITÉRIO =====
-    with tabs[5]:
+    # ABA 7: TEAM COMPARISON TOOL (NOVO!)
+    with tabs[6]:
+        st.markdown("# ⚖️ Comparação de Times")
+        
+        teams = sorted(list(df['HomeTeam'].unique()))
+        
+        col_comp1, col_comp2 = st.columns(2)
+        
+        team1 = col_comp1.selectbox("Time 1:", teams, key="comp_t1")
+        team2 = col_comp2.selectbox("Time 2:", teams, key="comp_t2")
+        
+        if st.button("⚖️ COMPARAR", type="primary", use_container_width=True):
+            with st.spinner("Comparando..."):
+                data1 = df[(df['HomeTeam'] == team1) | (df['AwayTeam'] == team1)]
+                data2 = df[(df['HomeTeam'] == team2) | (df['AwayTeam'] == team2)]
+                
+                if not data1.empty and not data2.empty:
+                    stats1 = {
+                        'corners': data1['Total_Corners'].mean(),
+                        'cards': data1['Total_Cards'].mean(),
+                        'goals': data1['Total_Goals'].mean(),
+                        'fouls': data1['Total_Fouls'].mean(),
+                        'volatility': MathEngineSupreme.volatility_index(data1['Total_Corners'].values)
+                    }
+                    
+                    stats2 = {
+                        'corners': data2['Total_Corners'].mean(),
+                        'cards': data2['Total_Cards'].mean(),
+                        'goals': data2['Total_Goals'].mean(),
+                        'fouls': data2['Total_Fouls'].mean(),
+                        'volatility': MathEngineSupreme.volatility_index(data2['Total_Corners'].values)
+                    }
+                    
+                    st.markdown("### 📊 Comparação Estatística")
+                    
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    
+                    with col_s1:
+                        st.markdown(f"#### {team1}")
+                        st.metric("Escanteios/Jogo", f"{stats1['corners']:.2f}")
+                        st.metric("Cartões/Jogo", f"{stats1['cards']:.2f}")
+                        st.metric("Gols/Jogo", f"{stats1['goals']:.2f}")
+                        st.metric("Volatilidade", f"{stats1['volatility']:.1f}%")
+                    
+                    with col_s2:
+                        st.markdown("#### vs")
+                        st.markdown("<br>" * 10, unsafe_allow_html=True)
+                    
+                    with col_s3:
+                        st.markdown(f"#### {team2}")
+                        st.metric("Escanteios/Jogo", f"{stats2['corners']:.2f}")
+                        st.metric("Cartões/Jogo", f"{stats2['cards']:.2f}")
+                        st.metric("Gols/Jogo", f"{stats2['goals']:.2f}")
+                        st.metric("Volatilidade", f"{stats2['volatility']:.1f}%")
+                    
+                    st.markdown("---")
+                    
+                    st.markdown("### 📊 Radar Chart Comparativo")
+                    fig_comp = viz.radar_chart(stats1, stats2, team1, team2)
+                    st.plotly_chart(fig_comp, use_container_width=True)
+    
+    # ABA 8: SCANNER
+    with tabs[7]:
         st.markdown("# 🔍 Scanner Multi-Critério")
         
         st.markdown("### ⚙️ Filtros")
@@ -1719,8 +1982,8 @@ def main():
                 else:
                     st.warning("⚠️ Nenhuma oportunidade encontrada com os critérios selecionados.")
     
-    # ===== ABA 7: LIGAS =====
-    with tabs[6]:
+    # ABA 9: LIGAS
+    with tabs[8]:
         st.markdown("# 📊 Análise por Liga")
         
         liga_stats = df.groupby('League').agg({
@@ -1735,26 +1998,26 @@ def main():
         
         st.markdown("---")
         
-        # Gráfico de barras
         fig = px.bar(
             liga_stats.reset_index(),
             x='League',
             y='Escanteios/Jogo',
             title="📊 Média de Escanteios por Liga",
             color='Escanteios/Jogo',
-            color_continuous_scale=['#DBEAFE', '#3B82F6']
+            color_continuous_scale=['#DBEAFE', '#3B82F6'] if st.session_state.theme == 'light' else ['#1e3a8a', '#3B82F6']
         )
         
+        theme = st.session_state.theme
         fig.update_layout(
-            paper_bgcolor='white',
-            plot_bgcolor='#F8FAFC',
-            font=dict(color='#1E293B')
+            paper_bgcolor='white' if theme == 'light' else '#0f172a',
+            plot_bgcolor='#F8FAFC' if theme == 'light' else '#1e293b',
+            font=dict(color='#1E293B' if theme == 'light' else '#f1f5f9')
         )
         
         st.plotly_chart(fig, use_container_width=True)
     
-    # ===== ABA 8: TIMES DNA =====
-    with tabs[7]:
+    # ABA 10: TIMES
+    with tabs[9]:
         st.markdown("# 👥 DNA dos Times")
         
         teams = sorted(list(df['HomeTeam'].unique()))
@@ -1774,7 +2037,6 @@ def main():
             
             st.markdown("---")
             
-            # Volatilidade
             volatility = MathEngineSupreme.volatility_index(time_data['Total_Corners'].values)
             
             st.markdown("### 📈 Análise de Volatilidade")
@@ -1789,7 +2051,6 @@ def main():
             
             st.markdown("---")
             
-            # Relatório técnico
             st.markdown("### 📋 Relatório Técnico")
             
             col_r1, col_r2 = st.columns(2)
@@ -1812,7 +2073,6 @@ def main():
             
             st.markdown("---")
             
-            # Histograma
             fig = px.histogram(
                 time_data,
                 x='Total_Corners',
@@ -1821,22 +2081,17 @@ def main():
                 color_discrete_sequence=['#3B82F6']
             )
             
+            theme = st.session_state.theme
             fig.update_layout(
-                paper_bgcolor='white',
-                plot_bgcolor='#F8FAFC',
-                font=dict(color='#1E293B')
+                paper_bgcolor='white' if theme == 'light' else '#0f172a',
+                plot_bgcolor='#F8FAFC' if theme == 'light' else '#1e293b',
+                font=dict(color='#1E293B' if theme == 'light' else '#f1f5f9')
             )
             
             st.plotly_chart(fig, use_container_width=True)
     
-    # ===== ABA 9: ÁRBITROS =====
-    with tabs[8]:
-        st.markdown("# 👨‍⚖️ Banco de Árbitros")
-        
-        st.dataframe(refs, use_container_width=True, height=600)
-    
-    # ===== ABA 10: MONTE CARLO =====
-    with tabs[9]:
+    # ABA 11: MONTE CARLO
+    with tabs[10]:
         st.markdown("# 🎲 Monte Carlo Estratégico")
         
         lam = st.number_input("Média Esperada:", value=10.0, min_value=1.0, max_value=20.0, step=0.5)
@@ -1857,33 +2112,31 @@ def main():
                 
                 st.markdown("---")
                 
-                # Recomendações estratégicas
                 st.markdown("### 💎 Recomendações Estratégicas")
                 
                 if result['over_10_5'] >= 0.70:
-                    st.markdown("""
+                    st.markdown(f"""
                     <div class="card-success">
-                    <strong>✅ Over 10.5:</strong> Altamente recomendado (Prob: {:.1f}%)
+                    <strong>✅ Over 10.5:</strong> Altamente recomendado (Prob: {result['over_10_5']*100:.1f}%)
                     </div>
-                    """.format(result['over_10_5'] * 100), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
                 
                 if result['over_11_5'] >= 0.60:
-                    st.markdown("""
+                    st.markdown(f"""
                     <div class="card-success">
-                    <strong>✅ Over 11.5:</strong> Recomendado (Prob: {:.1f}%)
+                    <strong>✅ Over 11.5:</strong> Recomendado (Prob: {result['over_11_5']*100:.1f}%)
                     </div>
-                    """.format(result['over_11_5'] * 100), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
                 
                 if result['over_12_5'] < 0.40:
-                    st.markdown("""
+                    st.markdown(f"""
                     <div class="card-warning">
-                    <strong>⚠️ Over 12.5:</strong> Risco alto (Prob: {:.1f}%)
+                    <strong>⚠️ Over 12.5:</strong> Risco alto (Prob: {result['over_12_5']*100:.1f}%)
                     </div>
-                    """.format(result['over_12_5'] * 100), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 
-                # Histograma
                 fig = px.histogram(
                     x=result['samples'],
                     nbins=20,
@@ -1891,24 +2144,24 @@ def main():
                     color_discrete_sequence=['#3B82F6']
                 )
                 
+                theme = st.session_state.theme
                 fig.update_layout(
-                    paper_bgcolor='white',
-                    plot_bgcolor='#F8FAFC',
-                    font=dict(color='#1E293B'),
+                    paper_bgcolor='white' if theme == 'light' else '#0f172a',
+                    plot_bgcolor='#F8FAFC' if theme == 'light' else '#1e293b',
+                    font=dict(color='#1E293B' if theme == 'light' else '#f1f5f9'),
                     xaxis_title="Escanteios",
                     yaxis_title="Frequência"
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
     
-    # ===== ABA 11: ANALYTICS =====
-    with tabs[10]:
-        st.markdown("# 📈 Analytics Dashboard")
+    # ABA 12: HISTÓRICO (NOVO!)
+    with tabs[11]:
+        st.markdown("# 📈 Histórico & Analytics")
         
         if st.session_state.bets_history:
-            analytics = AnalyticsEngine()
-            roi_data = analytics.calculate_roi(st.session_state.bets_history)
-            win_rate = analytics.win_rate(st.session_state.bets_history)
+            roi_data = analytics.calculate_roi()
+            win_rate = analytics.win_rate()
             
             col1, col2, col3, col4 = st.columns(4)
             
@@ -1916,46 +2169,39 @@ def main():
             col2.metric("Win Rate", f"{win_rate:.1f}%")
             col3.metric("Lucro/Prejuízo", f"R$ {roi_data['profit']:+.2f}")
             col4.metric("Total Apostado", f"R$ {roi_data['total_stake']:.2f}")
+            
+            st.markdown("---")
+            
+            st.markdown("### 📊 Histórico de Apostas")
+            
+            df_bets = pd.DataFrame(st.session_state.bets_history)
+            st.dataframe(df_bets, use_container_width=True)
+            
+            st.markdown("---")
+            
+            if st.button("🗑️ Limpar Histórico"):
+                st.session_state.bets_history = []
+                st.session_state.streak = {
+                    'current': 0,
+                    'best': 0,
+                    'total_wins': 0,
+                    'total_bets': 0
+                }
+                st.rerun()
         else:
             st.info("📊 Nenhuma aposta registrada ainda. Comece a usar o Construtor!")
+            
+            if st.button("➕ Adicionar Aposta de Teste"):
+                analytics.add_bet({
+                    'jogo': 'Arsenal x Chelsea',
+                    'mercado': 'Over 10.5',
+                    'stake': 50,
+                    'odd': 1.90,
+                    'result': 'pending'
+                })
+                st.rerun()
     
-    # ===== ABA 12: CONFIG =====
-    with tabs[11]:
-        st.markdown("# ⚙️ Configurações")
-        
-        st.markdown("### 🎨 Tema")
-        st.info("✅ Tema Claro ativado")
-        
-        st.markdown("---")
-        
-        st.markdown("### 💾 Dados")
-        
-        if st.button("🗑️ Limpar Histórico de Chat"):
-            st.session_state.chat_history = []
-            st.success("✅ Histórico limpo!")
-        
-        if st.button("🗑️ Limpar Bilhete"):
-            st.session_state.bilhete = []
-            st.success("✅ Bilhete limpo!")
-        
-        st.markdown("---")
-        
-        st.markdown("### ℹ️ Informações")
-        st.markdown(f"""
-        **Versão:** {VERSION}  
-        **Autor:** {AUTHOR}  
-        **Data:** Janeiro 2026
-        
-        **Funcionalidades:**
-        - ✅ 45+ Melhorias implementadas
-        - ✅ Motor de cálculo ponderado
-        - ✅ Confidence scoring
-        - ✅ Scanner multi-critério
-        - ✅ Oráculo com IA
-        - ✅ Analytics completo
-        """)
-    
-    # ===== FOOTER =====
+    # Footer
     st.markdown("---")
     st.markdown(
         f"<div style='text-align: center; color: #64748B;'>⚽ {VERSION} | {AUTHOR} | Janeiro 2026</div>",
